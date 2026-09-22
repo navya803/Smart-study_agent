@@ -1,8 +1,15 @@
-# 🎓 Study Assistant Agent (L2 AI Project)
+# 🎓 Smart Study Agent (L2 AI Project)
+
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![Streamlit](https://img.shields.io/badge/Streamlit-1.30%2B-FF4B4B.svg)](https://streamlit.io/)
+[![ChromaDB](https://img.shields.io/badge/VectorDB-ChromaDB-purple.svg)](https://www.trychroma.com/)
+[![Ollama](https://img.shields.io/badge/Local%20LLM-Ollama-black.svg)](https://ollama.ai/)
+[![Tests](https://img.shields.io/badge/Tests-Pytest%20Passing-brightgreen.svg)](https://docs.pytest.org/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 An intelligent, privacy-preserving, AI-powered **Study Assistant Agent** designed to help students learn effectively from their own uploaded study materials.
 
-Built with **Python**, **Streamlit**, **Local Sentence-Transformer Embeddings / Vector Store**, **ChromaDB**, and **Ollama** (with intelligent offline grounded synthesis fallback).
+Built with **Python**, **Streamlit**, **Local Sentence-Transformer Embeddings**, **ChromaDB**, and **Ollama** (with intelligent offline grounded synthesis fallback).
 
 ---
 
@@ -288,5 +295,3 @@ The platform features an automated RAG evaluator in [`src/evaluation.py`](file:/
 - Flashcard deck auto-generation.
 - Spaced-repetition study reminders.
 - Audio note voice synthesis.
-#   S m a r t - s t u d y _ a g e n t  
- 
