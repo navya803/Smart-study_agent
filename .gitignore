@@ -41,3 +41,8 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Environment secrets
+.env
+.env.*
+*.env

@@ -1,11 +1,12 @@
 """
 Study Assistant Agent - Main Streamlit Web Application
-An L2 AI-Powered Privacy-Focused Learning Assistant.
+An L2 AI-Powered Privacy-Focused Learning Assistant with LLM Tool Loop, Real MCP Client/Server, Reflection, and Prompt Injection Defense.
 """
 
 import os
 import shutil
 import tempfile
+import logging
 from datetime import datetime, date
 import streamlit as st
 import pandas as pd
@@ -22,10 +23,11 @@ from src.study_planner import StudyPlannerAgent
 from src.summarizer import SummarizerAgent
 from src.quiz_generator import QuizGeneratorAgent
 from src.progress_tracker import ProgressTrackerAgent
-from src.mcp_tools import MCPToolRegistry
 from src.agent_router import AgentRouter
 from src.evaluation import RAGEvaluator
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Page Setup
 st.set_page_config(
@@ -35,66 +37,88 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS Styling (Glassmorphism + Dark/Indigo Aesthetics)
+# Custom CSS Styling (Glassmorphism + Sunset Rose & Amber Warm Palette)
 st.markdown("""
 <style>
-    /* Global Styles */
+    /* Global App Background & Typography */
     .stApp {
-        background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%);
-        color: #f8fafc;
-        font-family: 'Inter', system-ui, sans-serif;
+        background: linear-gradient(135deg, #18080e 0%, #2a081b 45%, #1f0e06 85%, #120508 100%);
+        color: #fff1f2;
+        font-family: 'Inter', system-ui, -apple-system, sans-serif;
     }
     
-    /* Card Container */
+    /* Sidebar Styling */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #1c0910 0%, #15060b 100%) !important;
+        border-right: 1px solid rgba(251, 146, 60, 0.15);
+    }
+    
+    /* Card Container with Sunset Glow */
     .glass-card {
-        background: rgba(30, 41, 59, 0.7);
-        backdrop-filter: blur(12px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(45, 16, 26, 0.65);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border: 1px solid rgba(251, 146, 60, 0.2);
         border-radius: 16px;
         padding: 24px;
         margin-bottom: 20px;
-        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+    .glass-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 12px 40px 0 rgba(243, 85, 52, 0.25);
     }
     
-    /* Header Gradient */
+    /* Header Sunset Gradient */
     .main-header {
-        background: linear-gradient(90deg, #6366f1 0%, #a855f7 50%, #ec4899 100%);
+        background: linear-gradient(90deg, #f43f5e 0%, #fb923c 50%, #f59e0b 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         font-weight: 800;
-        font-size: 2.5rem;
+        font-size: 2.6rem;
         margin-bottom: 0.2rem;
+        letter-spacing: -0.02em;
     }
     
     /* Badge styling */
     .badge-source {
-        background-color: #312e81;
-        color: #c7d2fe;
-        padding: 4px 10px;
+        background: linear-gradient(90deg, #881337 0%, #9a3412 100%);
+        color: #ffedd5;
+        padding: 4px 12px;
         border-radius: 8px;
         font-size: 0.82rem;
         font-weight: 600;
         margin-right: 6px;
+        border: 1px solid rgba(251, 146, 60, 0.3);
     }
     
-    /* Stat Box */
+    /* Stat Box with Rose-Amber Accent */
     .stat-box {
-        background: rgba(255, 255, 255, 0.05);
-        border-radius: 12px;
-        padding: 16px;
+        background: rgba(251, 146, 60, 0.07);
+        border-radius: 14px;
+        padding: 18px;
         text-align: center;
-        border: 1px solid rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(244, 63, 94, 0.25);
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+        transition: all 0.3s ease;
+    }
+    .stat-box:hover {
+        background: rgba(251, 146, 60, 0.12);
+        border-color: rgba(251, 146, 60, 0.45);
     }
     .stat-val {
-        font-size: 1.8rem;
-        font-weight: 700;
-        color: #818cf8;
+        font-size: 1.9rem;
+        font-weight: 800;
+        color: #fb923c;
+        text-shadow: 0 0 20px rgba(251, 146, 60, 0.3);
     }
     .stat-lbl {
-        font-size: 0.85rem;
-        color: #94a3b8;
+        font-size: 0.82rem;
+        color: #fca5a5;
         text-transform: uppercase;
-        letter-spacing: 0.05em;
+        letter-spacing: 0.08em;
+        font-weight: 600;
     }
 
     /* Tab styling */
@@ -102,13 +126,51 @@ st.markdown("""
         gap: 8px;
     }
     .stTabs [data-baseweb="tab"] {
-        border-radius: 8px;
+        border-radius: 10px;
         padding: 10px 18px;
-        background-color: rgba(30, 41, 59, 0.5);
+        background-color: rgba(45, 16, 26, 0.5);
+        color: #fecdd3;
+        border: 1px solid rgba(251, 146, 60, 0.15);
+        transition: all 0.2s ease;
+    }
+    .stTabs [data-baseweb="tab"]:hover {
+        background-color: rgba(244, 63, 94, 0.2);
+        color: #ffffff;
     }
     .stTabs [aria-selected="true"] {
-        background: linear-gradient(90deg, #4f46e5 0%, #7c3aed 100%) !important;
-        color: white !important;
+        background: linear-gradient(90deg, #e11d48 0%, #f97316 100%) !important;
+        color: #ffffff !important;
+        font-weight: 700;
+        border: none !important;
+        box-shadow: 0 4px 18px rgba(225, 29, 72, 0.4);
+    }
+
+    /* Streamlit Button Styling */
+    div.stButton > button {
+        background: linear-gradient(90deg, #e11d48 0%, #f97316 100%) !important;
+        color: #ffffff !important;
+        border: none !important;
+        border-radius: 10px !important;
+        font-weight: 600 !important;
+        transition: all 0.3s ease !important;
+        box-shadow: 0 4px 14px rgba(225, 29, 72, 0.3) !important;
+    }
+    div.stButton > button:hover {
+        transform: translateY(-1px) !important;
+        box-shadow: 0 6px 20px rgba(249, 115, 22, 0.5) !important;
+        background: linear-gradient(90deg, #f43f5e 0%, #fb923c 100%) !important;
+    }
+
+    /* Inputs & Selectboxes Focus Glow */
+    .stTextInput input, .stTextArea textarea, .stSelectbox [data-baseweb="select"] {
+        border-radius: 8px;
+        border: 1px solid rgba(251, 146, 60, 0.25) !important;
+        background-color: rgba(24, 8, 14, 0.7) !important;
+        color: #fff1f2 !important;
+    }
+    .stTextInput input:focus, .stTextArea textarea:focus {
+        border-color: #fb923c !important;
+        box-shadow: 0 0 12px rgba(251, 146, 60, 0.3) !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -128,21 +190,12 @@ def get_system_components():
     quiz_generator = QuizGeneratorAgent(retriever=retriever, llm_handler=llm_handler)
     progress_tracker = ProgressTrackerAgent()
     
-    mcp_registry = MCPToolRegistry(
-        retriever=retriever,
-        study_planner=study_planner,
-        summarizer=summarizer,
-        quiz_generator=quiz_generator,
-        progress_tracker=progress_tracker
-    )
-    
     agent_router = AgentRouter(
         rag_agent=rag_agent,
         study_planner=study_planner,
         summarizer=summarizer,
         quiz_generator=quiz_generator,
-        progress_tracker=progress_tracker,
-        mcp_registry=mcp_registry
+        progress_tracker=progress_tracker
     )
     
     return {
@@ -155,7 +208,6 @@ def get_system_components():
         "summarizer": summarizer,
         "quiz_generator": quiz_generator,
         "progress_tracker": progress_tracker,
-        "mcp_registry": mcp_registry,
         "agent_router": agent_router
     }
 
@@ -218,8 +270,9 @@ with st.sidebar:
             st.success("Profile saved successfully!")
 
     st.markdown("---")
-    st.markdown("### 🤖 Local AI Status")
-    
+    st.markdown("### 🤖 Agent Architecture Status")
+    st.info("🟢 **LLM Tool Loop**: Bounded (Max 5 Steps)\n\n🟢 **MCP Client/Server**: Active\n\n🟢 **Reflection Stage**: Enabled")
+
     ollama_info = llm_h.check_ollama_availability()
     if ollama_info["available"]:
         st.success(f"🟢 Ollama Active ({ollama_info['active_model']})")
@@ -234,7 +287,7 @@ with st.sidebar:
 
 # ------------------- MAIN INTERFACE -------------------
 st.markdown("<h1 class='main-header'>🎓 Study Assistant Agent</h1>", unsafe_allow_html=True)
-st.caption("Local, Privacy-Preserving L2 AI Learning System • RAG Grounded • Multi-Agent Orchestration")
+st.caption("Agentic AI Study Assistant • LLM Bounded Tool Loop • Real MCP Integration • Reflection & Citation Verification")
 
 # Create Navigation Tabs
 tab_dash, tab_planner, tab_docs, tab_qa, tab_summary, tab_quiz, tab_progress, tab_eval = st.tabs([
@@ -327,25 +380,26 @@ with tab_planner:
             subjs = [s.strip() for s in plan_subjects_raw.split(",") if s.strip()]
             tops = [t.strip() for t in plan_topics_raw.split(",") if t.strip()]
             
-            with st.spinner("Calculating optimal study schedule..."):
-                res = components["study_planner"].generate_plan(
-                    goal=plan_goal,
-                    exam_date=str(plan_exam_date),
-                    subjects=subjs if subjs else ["General Subject"],
-                    topics=tops if tops else ["General Topic"],
-                    daily_hours=plan_hours
-                )
-                if res["success"]:
-                    st.session_state.generated_plan = res
+            with st.spinner("Calculating optimal study schedule via MCP Planner Tool..."):
+                res = components["agent_router"].mcp_client.execute_tool("create_study_plan", {
+                    "goal": plan_goal,
+                    "exam_date": str(plan_exam_date),
+                    "subjects": subjs if subjs else ["General Subject"],
+                    "topics": tops if tops else ["General Topic"],
+                    "daily_hours": plan_hours
+                })
+                plan_res = res.result_data if isinstance(res.result_data, dict) else {}
+                if plan_res.get("success"):
+                    st.session_state.generated_plan = plan_res
                     p_tracker.set_topics(tops)
-                    st.success(f"Plan generated! Allocated across {res['total_days_planned']} days.")
+                    st.success(f"Plan generated! Allocated across {plan_res['total_days_planned']} days.")
                 else:
-                    st.error(res.get("error", "Failed to generate plan."))
+                    st.error(plan_res.get("error", "Failed to generate plan."))
 
     with col_p2:
         if st.session_state.generated_plan:
             plan_data = st.session_state.generated_plan
-            st.markdown(f"### 📋 Study Plan Schedule ({plan_data['days_remaining']} Days to Exam)")
+            st.markdown(f"### 📋 Study Plan Schedule ({plan_data.get('days_remaining', 0)} Days to Exam)")
             
             with st.expander("🤖 AI Counselor Strategy Overview", expanded=True):
                 st.markdown(plan_data.get("ai_summary", ""))
@@ -431,22 +485,43 @@ with tab_docs:
 
 
 # =========================================================================
-# TAB 4: ASK ASSISTANT (RAG Q&A CHAT)
+# TAB 4: ASK ASSISTANT (LLM TOOL LOOP + MCP + REFLECTION)
 # =========================================================================
 with tab_qa:
-    st.header("💬 Ask Questions About Study Materials")
-    st.write("Get grounded answers based strictly on your uploaded documents with source citations.")
+    st.header("💬 Ask Questions & Interact with Study Agent")
+    st.caption("LLM-Driven Bounded Tool Loop (Max 5 steps) • MCP Client/Server Execution • Reflection Verification")
 
     for msg in st.session_state.chat_history:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
+            
+            if msg.get("security_warning"):
+                st.warning(f"⚠️ {msg['security_warning']}")
+
             if msg.get("sources"):
                 with st.expander("📌 View Source Citations"):
                     for src in msg["sources"]:
-                        st.markdown(f"**[{src['filename']} - Chunk #{src['chunk_id']} (Relevance: {int(src['similarity_score']*100)}%)]**")
-                        st.caption(f"\"{src['text_snippet']}\"")
+                        st.markdown(f"**[{src.get('filename', 'Doc')} - Chunk #{src.get('chunk_id', '?')} (Relevance: {int(src.get('similarity_score', 0)*100)}%)]**")
+                        st.caption(f"\"{src.get('text_snippet', '')}\"")
 
-    user_query = st.chat_input("Ask a question about your study materials...")
+            if msg.get("loop_detail"):
+                with st.expander("🛠️ View Agent Tool Loop & Reflection Trace"):
+                    ld = msg["loop_detail"]
+                    st.markdown(f"**Steps Taken:** {ld.get('steps_taken', 1)} / 5")
+                    
+                    st.markdown("#### 🔍 Discovered Observations:")
+                    for obs in ld.get("observations", []):
+                        st.code(obs.get("formatted_text", str(obs)))
+
+                    st.markdown("#### 🔍 Reflection Result:")
+                    ref = ld.get("reflection", {})
+                    st.json({
+                        "supported": ref.get("supported"),
+                        "issues": ref.get("issues"),
+                        "required_action": ref.get("required_action")
+                    })
+
+    user_query = st.chat_input("Ask a question, request a plan, summary, or quiz...")
     
     if user_query:
         st.session_state.chat_history.append({"role": "user", "content": user_query})
@@ -454,23 +529,50 @@ with tab_qa:
             st.markdown(user_query)
 
         with st.chat_message("assistant"):
-            with st.spinner("Searching study materials & generating grounded answer..."):
-                rag_res = components["rag_agent"].answer_question(query=user_query)
-                answer_text = rag_res["answer"]
-                sources = rag_res.get("sources", [])
+            with st.spinner("Agent Loop: Deciding tool calls via MCP Client, executing tools & reflecting..."):
+                router_res = components["agent_router"].route_and_execute(
+                    user_input=user_query,
+                    context_params=st.session_state.user_profile
+                )
                 
+                result_info = router_res["result"]
+                answer_text = result_info["answer"]
+                sources = result_info.get("sources", [])
+                sec_warn = result_info.get("security_warning")
+                loop_detail = router_res.get("loop_detail", {})
+
+                if sec_warn:
+                    st.warning(f"⚠️ {sec_warn}")
+
                 st.markdown(answer_text)
                 
                 if sources:
                     with st.expander("📌 View Source Citations"):
                         for src in sources:
-                            st.markdown(f"**[{src['filename']} - Chunk #{src['chunk_id']} (Relevance: {int(src['similarity_score']*100)}%)]**")
-                            st.caption(f"\"{src['text_snippet']}\"")
+                            st.markdown(f"**[{src.get('filename', 'Doc')} - Chunk #{src.get('chunk_id', '?')} (Relevance: {int(src.get('similarity_score', 0)*100)}%)]**")
+                            st.caption(f"\"{src.get('text_snippet', '')}\"")
+
+                with st.expander("🛠️ View Agent Tool Loop & Reflection Trace"):
+                    st.markdown(f"**Steps Taken:** {loop_detail.get('steps_taken', 1)} / 5")
+                    
+                    st.markdown("#### 🔍 Discovered Observations:")
+                    for obs in loop_detail.get("observations", []):
+                        st.code(obs.get("formatted_text", str(obs)))
+
+                    st.markdown("#### 🔍 Reflection Verification:")
+                    ref = loop_detail.get("reflection", {})
+                    st.json({
+                        "supported": ref.get("supported"),
+                        "issues": ref.get("issues"),
+                        "required_action": ref.get("required_action")
+                    })
 
                 st.session_state.chat_history.append({
                     "role": "assistant",
                     "content": answer_text,
-                    "sources": sources
+                    "sources": sources,
+                    "security_warning": sec_warn,
+                    "loop_detail": loop_detail
                 })
 
 
@@ -496,12 +598,13 @@ with tab_summary:
             raw_text_input = st.text_area("Paste text to summarize", height=200)
 
         if st.button("✨ Generate Summary", type="primary", use_container_width=True):
-            with st.spinner("Synthesizing study summary..."):
-                res = components["summarizer"].summarize(
-                    text=raw_text_input if summary_mode == "Raw Text Input" else None,
-                    topic=target_topic if summary_mode == "Topic Query" else None
-                )
-                if res["success"]:
+            with st.spinner("Synthesizing study summary via MCP..."):
+                obs = components["agent_router"].mcp_client.execute_tool("summarize_material", {
+                    "text": raw_text_input if summary_mode == "Raw Text Input" else None,
+                    "topic": target_topic if summary_mode == "Topic Query" else None
+                })
+                res = obs.result_data if isinstance(obs.result_data, dict) else {}
+                if res.get("success"):
                     st.session_state.current_summary = res["summary"]
                 else:
                     st.error(res.get("error", "Failed to generate summary."))
@@ -530,9 +633,13 @@ with tab_quiz:
         num_q = st.slider("Number of Questions", 2, 10, 5)
 
         if st.button("🎲 Generate Practice Quiz", type="primary", use_container_width=True):
-            with st.spinner("Generating grounded practice questions..."):
-                quiz_res = components["quiz_generator"].generate_quiz(topic=quiz_topic, num_questions=num_q)
-                if quiz_res["success"]:
+            with st.spinner("Generating grounded practice questions via MCP..."):
+                obs = components["agent_router"].mcp_client.execute_tool("generate_quiz", {
+                    "topic": quiz_topic,
+                    "num_questions": num_q
+                })
+                quiz_res = obs.result_data if isinstance(obs.result_data, dict) else {}
+                if quiz_res.get("success"):
                     st.session_state.active_quiz = quiz_res
                 else:
                     st.error(quiz_res.get("error", "Failed to generate quiz."))
@@ -576,7 +683,13 @@ with tab_progress:
         log_notes = st.text_input("Session Notes")
 
         if st.button("💾 Log Session", type="primary", use_container_width=True):
-            p_tracker.log_study_session(log_subj, log_top, log_hrs, log_notes)
+            components["agent_router"].mcp_client.execute_tool("update_progress", {
+                "action": "log_session",
+                "subject": log_subj,
+                "topic": log_top,
+                "hours": log_hrs,
+                "notes": log_notes
+            })
             st.success(f"Logged {log_hrs} hours for {log_top}!")
 
     with col_overview:
@@ -601,10 +714,10 @@ with tab_progress:
 
 
 # =========================================================================
-# TAB 8: EVALUATION & MCP TOOLS
+# TAB 8: EVALUATION & MCP DISCOVERY
 # =========================================================================
 with tab_eval:
-    st.header("⚙️ RAG System Evaluation & MCP Tool Layer")
+    st.header("⚙️ RAG System Evaluation & Real MCP Client/Server Discovery")
     
     col_e1, col_e2 = st.columns(2)
     
@@ -631,11 +744,14 @@ with tab_eval:
                 st.error(f"Evaluation Error: {str(e)}")
 
     with col_e2:
-        st.markdown("### 🛠️ Model Context Protocol (MCP) Tools")
-        st.write("Registered tools available to the Study Assistant Agent Router:")
+        st.markdown("### 🛠️ Model Context Protocol (MCP) Server Tools")
+        st.write("Discovered tools retrieved dynamically from MCP Server via MCP Client:")
         
-        mcp_tools = components["mcp_registry"].get_tool_definitions()
-        for tool in mcp_tools:
+        mcp_client = components["agent_router"].mcp_client
+        discovered_mcp_tools = mcp_client.get_discovered_tools()
+        for tool in discovered_mcp_tools:
             st.markdown(f"**`{tool['name']}`**")
             st.caption(tool['description'])
+            with st.expander("Show MCP Input Schema"):
+                st.json(tool["inputSchema"])
             st.markdown("---")

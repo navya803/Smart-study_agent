@@ -1,20 +1,27 @@
 """
 Agent Router & Orchestrator component for Study Assistant Agent.
-Analyzes student intent and routes requests to the appropriate specialist agent.
+Delegates user queries to the LLM-driven Bounded Agent Loop with MCP Client/Server tool execution.
+Removes static keyword routing as the primary decision mechanism while preserving backwards-compatible interfaces.
 """
 
-import re
-from typing import Dict, Any
+import logging
+from typing import Dict, Any, Optional
+
 from src.rag_agent import RAGAgent
 from src.study_planner import StudyPlannerAgent
 from src.summarizer import SummarizerAgent
 from src.quiz_generator import QuizGeneratorAgent
 from src.progress_tracker import ProgressTrackerAgent
-from src.mcp_tools import MCPToolRegistry
+from src.mcp.server import StudyAssistantMCPServer
+from src.mcp.client import StudyAssistantMCPClient
+from src.agent_loop import BoundedAgentLoop
+from src.reflection import ReflectionAgent
+
+logger = logging.getLogger(__name__)
 
 
 class AgentRouter:
-    """Orchestrates multi-agent execution by routing user input to specialist agents."""
+    """Orchestrates multi-agent execution via LLM-driven tool loop and MCP client/server integration."""
 
     def __init__(
         self,
@@ -23,72 +30,51 @@ class AgentRouter:
         summarizer: SummarizerAgent,
         quiz_generator: QuizGeneratorAgent,
         progress_tracker: ProgressTrackerAgent,
-        mcp_registry: MCPToolRegistry
+        mcp_registry: Optional[Any] = None
     ):
         self.rag_agent = rag_agent
         self.study_planner = study_planner
         self.summarizer = summarizer
         self.quiz_generator = quiz_generator
         self.progress_tracker = progress_tracker
-        self.mcp_registry = mcp_registry
 
-    def route_and_execute(self, user_input: str, context_params: Dict[str, Any] = None) -> Dict[str, Any]:
+        # Initialize Real MCP Server and MCP Client
+        self.mcp_server = StudyAssistantMCPServer(
+            retriever=rag_agent.retriever,
+            study_planner=study_planner,
+            summarizer=summarizer,
+            quiz_generator=quiz_generator,
+            progress_tracker=progress_tracker
+        )
+        self.mcp_client = StudyAssistantMCPClient(mcp_server=self.mcp_server)
+        self.mcp_client.initialize_and_discover()
+
+        self.reflection_agent = ReflectionAgent(llm_handler=rag_agent.llm_handler)
+        self.agent_loop = BoundedAgentLoop(
+            mcp_client=self.mcp_client,
+            llm_handler=rag_agent.llm_handler,
+            reflection_agent=self.reflection_agent,
+            max_steps=5
+        )
+
+    def route_and_execute(self, user_input: str, context_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        Detects user intent from query text and dispatches to appropriate agent.
+        Executes LLM-driven tool loop for user input, validating actions via MCP Client.
         """
-        input_lower = user_input.lower().strip()
-        params = context_params or {}
+        logger.info("AgentRouter processing user input: '%s'", user_input)
+        loop_result = self.agent_loop.run(user_query=user_input, context_params=context_params)
 
-        # 1. Intent: Study Schedule / Plan
-        if any(kw in input_lower for kw in ["schedule", "study plan", "exam plan", "timeline", "timetable"]):
-            result = self.study_planner.generate_plan(
-                goal=params.get("goal", "Master topics"),
-                exam_date=params.get("exam_date", ""),
-                subjects=params.get("subjects", []),
-                topics=params.get("topics", []),
-                daily_hours=params.get("daily_hours", 2.0)
-            )
-            return {
-                "target_agent": "Study Planner Agent",
-                "intent": "study_plan",
-                "result": result
-            }
-
-        # 2. Intent: Summarize
-        elif any(kw in input_lower for kw in ["summarize", "summary", "key points", "revision notes", "overview"]):
-            # Extract topic if present in query
-            clean_topic = re.sub(r'summarize|summary|of|for|the|key points', '', input_lower, flags=re.IGNORECASE).strip()
-            result = self.summarizer.summarize(topic=clean_topic if clean_topic else params.get("selected_topic"))
-            return {
-                "target_agent": "Summarizer Agent",
-                "intent": "summarize",
-                "result": result
-            }
-
-        # 3. Intent: Quiz / Question Generation
-        elif any(kw in input_lower for kw in ["quiz", "questions", "practice test", "mcq", "test me", "generate questions"]):
-            clean_topic = re.sub(r'quiz|questions|practice|test|on|for|the|generate', '', input_lower, flags=re.IGNORECASE).strip()
-            result = self.quiz_generator.generate_quiz(topic=clean_topic if clean_topic else params.get("selected_topic"))
-            return {
-                "target_agent": "Quiz Generator Agent",
-                "intent": "quiz_generation",
-                "result": result
-            }
-
-        # 4. Intent: Progress Query
-        elif any(kw in input_lower for kw in ["progress", "completed", "hours spent", "how much done", "stats"]):
-            result = self.progress_tracker.get_progress_summary()
-            return {
-                "target_agent": "Progress Agent",
-                "intent": "progress_query",
-                "result": result
-            }
-
-        # 5. Default Intent: RAG Question Answering
-        else:
-            result = self.rag_agent.answer_question(query=user_input)
-            return {
-                "target_agent": "RAG Knowledge Agent",
-                "intent": "rag_qa",
-                "result": result
-            }
+        return {
+            "target_agent": "LLM-Driven Agent Loop (MCP Integrated)",
+            "intent": "agent_tool_loop",
+            "result": {
+                "answer": loop_result["final_answer"],
+                "draft_answer": loop_result["draft_answer"],
+                "sources": loop_result.get("sources", []),
+                "steps_taken": loop_result.get("steps_taken", 1),
+                "observations": loop_result.get("observations", []),
+                "reflection": loop_result.get("reflection", {}),
+                "security_warning": loop_result.get("security_warning")
+            },
+            "loop_detail": loop_result
+        }

@@ -41,12 +41,10 @@ class StudyPlannerAgent:
         """
         Generates a structured study schedule.
         """
-        if not subjects or not topics:
-            return {
-                "success": False,
-                "error": "Please provide at least one subject and topic.",
-                "schedule": []
-            }
+        if not subjects:
+            subjects = ["General Subject"]
+        if not topics:
+            topics = subjects if subjects else ["General Topic"]
 
         if daily_hours <= 0:
             return {

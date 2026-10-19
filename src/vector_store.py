@@ -1,13 +1,16 @@
 """
 Vector Store Manager for Study Assistant Agent.
-Manages ChromaDB vector store with clean in-memory vector index fallback.
+Manages ChromaDB vector store with clean in-memory vector index fallback and structured logging.
 """
 
 import os
 import sys
 import uuid
+import logging
 import numpy as np
 from typing import List, Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class InMemoryVectorStore:
@@ -93,14 +96,17 @@ class VectorStoreManager:
     """Manages Vector Storage for study document chunks."""
 
     def __init__(self, persist_directory: str = "vectorstore", collection_name: str = "study_materials"):
-        self.persist_directory = os.path.abspath(persist_directory)
-        os.makedirs(self.persist_directory, exist_ok=True)
+        if persist_directory == ":memory:":
+            self.persist_directory = ":memory:"
+            self.use_fallback = True
+        else:
+            self.persist_directory = os.path.abspath(persist_directory)
+            os.makedirs(self.persist_directory, exist_ok=True)
+            is_py314 = sys.version_info >= (3, 14)
+            self.use_fallback = is_py314
+
         self.collection_name = collection_name
         self.fallback_store = InMemoryVectorStore()
-        
-        # Check if running under Python 3.14 preview where ChromaDB Rust DLL has C++ access violation
-        is_py314 = sys.version_info >= (3, 14)
-        self.use_fallback = is_py314
 
         if not self.use_fallback:
             try:
@@ -110,11 +116,17 @@ class VectorStoreManager:
                     name=self.collection_name,
                     metadata={"hnsw:space": "cosine"}
                 )
-            except Exception:
+                logger.info("ChromaDB vector store initialized successfully.")
+            except ImportError:
+                logger.warning("chromadb package not available. Falling back to InMemoryVectorStore.")
+                self.use_fallback = True
+            except Exception as exc:
+                logger.warning("Failed to initialize ChromaDB PersistentClient: %s. Falling back to InMemoryVectorStore.", exc)
                 self.use_fallback = True
 
     def add_chunks(self, chunks: List[Dict[str, Any]], embeddings: List[List[float]]) -> int:
         if not chunks or not embeddings or len(chunks) != len(embeddings):
+            logger.warning("add_chunks called with invalid chunks or embeddings length mismatch.")
             return 0
 
         documents = [c["text"] for c in chunks]
@@ -139,11 +151,14 @@ class VectorStoreManager:
                     metadatas=clean_metadatas,
                     ids=ids
                 )
+                logger.info("Added %d chunks to ChromaDB collection '%s'", len(chunks), self.collection_name)
                 return len(chunks)
-            except Exception:
+            except Exception as exc:
+                logger.warning("ChromaDB add_chunks failed: %s. Reverting to InMemoryVectorStore.", exc)
                 self.use_fallback = True
 
         self.fallback_store.add(documents, embeddings, clean_metadatas, ids)
+        logger.info("Added %d chunks to InMemoryVectorStore fallback.", len(chunks))
         return len(chunks)
 
     def similarity_search(self, query_embedding: List[float], top_k: int = 4) -> List[Dict[str, Any]]:
@@ -159,7 +174,8 @@ class VectorStoreManager:
                     query_embeddings=[query_embedding],
                     n_results=actual_k
                 )
-            except Exception:
+            except Exception as exc:
+                logger.warning("ChromaDB similarity_search failed: %s. Using InMemoryVectorStore fallback.", exc)
                 self.use_fallback = True
                 results = self.fallback_store.query(query_embedding, top_k=top_k)
 
@@ -202,7 +218,8 @@ class VectorStoreManager:
                 doc_summary[filename]["chunk_count"] += 1
 
             return list(doc_summary.values())
-        except Exception:
+        except Exception as exc:
+            logger.warning("ChromaDB list_indexed_documents failed: %s", exc)
             self.use_fallback = True
             return self.fallback_store.list_documents()
 
@@ -216,7 +233,8 @@ class VectorStoreManager:
             if ids_to_delete:
                 self.collection.delete(ids=ids_to_delete)
             return len(ids_to_delete)
-        except Exception:
+        except Exception as exc:
+            logger.warning("ChromaDB delete_document_by_filename failed: %s", exc)
             self.use_fallback = True
             return self.fallback_store.delete_by_filename(filename)
 
@@ -229,7 +247,8 @@ class VectorStoreManager:
                     name=self.collection_name,
                     metadata={"hnsw:space": "cosine"}
                 )
-            except Exception:
+            except Exception as exc:
+                logger.warning("ChromaDB clear_all failed: %s", exc)
                 self.use_fallback = True
 
     def get_total_chunks_count(self) -> int:
@@ -237,6 +256,7 @@ class VectorStoreManager:
             return self.fallback_store.count()
         try:
             return self.collection.count()
-        except Exception:
+        except Exception as exc:
+            logger.warning("ChromaDB get_total_chunks_count failed: %s", exc)
             self.use_fallback = True
             return self.fallback_store.count()
